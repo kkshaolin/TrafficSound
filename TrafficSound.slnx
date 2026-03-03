@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="TrafficSound/TrafficSound.vcxproj" Id="e22df908-feef-4d54-bf99-e233522b9e42" />
+</Solution>
