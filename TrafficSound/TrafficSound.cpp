@@ -59,6 +59,8 @@ int main() {
         Rect myROI(frame.cols / 2, 0, frame.cols / 2, frame.rows);
         Mat cropped = frame(myROI).clone();
 
+        GaussianBlur(cropped, cropped, Size(5, 5), 0);
+
         // 2. Pre-processing
         cvtColor(cropped, hsv, COLOR_BGR2HSV);
 
@@ -73,6 +75,12 @@ int main() {
 
         // รวม Mask ทั้งหมด
         bitwise_or(mask_red, mask_yellow, mask);
+
+        //Mat kernel = getStructuringElement(MORPH_ELLIPSE, Size(5, 5));
+        //// 1. กำจัดจุดเล็กๆ (Noise) ออกไปก่อน
+        //morphologyEx(mask, mask, MORPH_OPEN, kernel);
+        //// 2. เชื่อมพิกเซลที่เหลือให้เป็นก้อนที่สมบูรณ์
+        //morphologyEx(mask, mask, MORPH_CLOSE, kernel);
 
         // 4. ค้นหา Contours
         vector<vector<Point>> contours;
