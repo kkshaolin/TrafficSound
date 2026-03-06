@@ -4,69 +4,50 @@
 using namespace cv;
 using namespace std;
 
+// ฟังก์ชันตรวจจับป้ายหยุด (8 เหลี่ยม สีแดง)
 bool isStopSign(const vector<Point>& contour) {
-    // 1. กรองพื้นที่ขั้นต่ำก่อน เพื่อตัด Noise เล็กๆ ออก
     double area = contourArea(contour);
     if (area < 400) return false;
 
-    // 2. ทำ Approximation (ลดทอนจุดให้กลายเป็นรูปทรงเรขาคณิต)
     vector<Point> approx;
     double perimeter = arcLength(contour, true);
-    // ค่า epsilon (0.02 - 0.04) ยิ่งมากยิ่งลบรายละเอียดจุดย่อยๆ ออก
     approxPolyDP(contour, approx, 0.025 * perimeter, true);
 
-    // 3. ตรวจสอบจำนวนเหลี่ยม (ป้าย Stop คือ 8 เหลี่ยม)
-    // อนุโลมให้ 7-9 เหลี่ยมในกรณีภาพไม่ชัด
     if (approx.size() >= 7 && approx.size() <= 9) {
-
-        // 4. ตรวจสอบว่าเป็นรูปทรง "นูน" หรือไม่ (ป้ายจราจรต้องไม่มีส่วนเว้าเข้า)
         if (!isContourConvex(approx)) return false;
-
-        // 5. ตรวจสอบ Aspect Ratio (ป้าย Stop จะมีความกว้างและสูงใกล้เคียงกัน)
         Rect boundingBox = boundingRect(approx);
         double aspectRatio = (double)boundingBox.width / boundingBox.height;
-
-        // อัตราส่วนควรอยู่ระหว่าง 0.8 ถึง 1.2 (คือเกือบเป็นสี่เหลี่ยมจัตุรัส)
-        if (aspectRatio >= 0.75 && aspectRatio <= 1.25) {
-            return true;
-        }
+        if (aspectRatio >= 0.75 && aspectRatio <= 1.25) return true;
     }
-
     return false;
 }
 
+// ฟังก์ชันตรวจจับป้ายเตือน (4 เหลี่ยมข้าวหลามตัด สีเหลือง)
 bool isYellowWarningSign(const vector<Point>& contour) {
     double area = contourArea(contour);
     if (area < 400) return false;
 
     vector<Point> approx;
     double perimeter = arcLength(contour, true);
-    approxPolyDP(contour, approx, 0.04 * perimeter, true); // เพิ่ม epsilon เล็กน้อยเพื่อตัดมุมมน
+    approxPolyDP(contour, approx, 0.04 * perimeter, true);
 
-    // ป้ายเตือนส่วนใหญ่เป็นรูป 4 เหลี่ยม (ที่หมุนเอียง)
     if (approx.size() == 4) {
         if (!isContourConvex(approx)) return false;
-
         Rect boundingBox = boundingRect(approx);
         double aspectRatio = (double)boundingBox.width / boundingBox.height;
-
-        // ป้ายสี่เหลี่ยมข้าวหลามตัดควรมีอัตราส่วนกว้างยาวใกล้เคียง 1.0
-        if (aspectRatio >= 0.8 && aspectRatio <= 1.2) {
-            return true;
-        }
+        if (aspectRatio >= 0.75 && aspectRatio <= 1.25) return true;
     }
     return false;
 }
 
 int main() {
-
     VideoCapture cap("test.mp4");
     if (!cap.isOpened()) {
-        cout << "Cannot open camera" << endl;
+        cout << "Cannot open video file" << endl;
         return -1;
     }
 
-    Mat frame, hsv, mask, mask_red, mask1, mask2, mask_yellow, result;
+    Mat frame, hsv, mask, mask_red, mask1, mask2, mask_yellow, RoiDetect;
 
     while (true) {
         cap >> frame;
@@ -74,30 +55,26 @@ int main() {
 
         resize(frame, frame, Size(), 0.5, 0.5);
 
-        // 1. กำหนด ROI และ Crop
+        // 1. กำหนด ROI ฝั่งขวาของภาพ (สมมติว่าป้ายอยู่ทางขวา)
         Rect myROI(frame.cols / 2, 0, frame.cols / 2, frame.rows);
         Mat cropped = frame(myROI).clone();
 
-        // 2. Pre-processing บนภาพที่ Crop
-        //GaussianBlur(cropped, cropped, Size(5, 5), 0);
+        // 2. Pre-processing
         cvtColor(cropped, hsv, COLOR_BGR2HSV);
 
-        // 3. Mask สีแดง
+        // 3. ทำ Mask สี
+        // สีแดง (2 ช่วง)
         inRange(hsv, Scalar(0, 120, 70), Scalar(10, 255, 255), mask1);
         inRange(hsv, Scalar(170, 120, 70), Scalar(180, 255, 255), mask2);
         bitwise_or(mask1, mask2, mask_red);
 
-        // Mask สีเลือง
-		inRange(hsv, Scalar(20, 100, 100), Scalar(30, 255, 255), mask_yellow);
+        // สีเหลือง
+        inRange(hsv, Scalar(20, 100, 100), Scalar(32, 255, 255), mask_yellow);
 
+        // รวม Mask ทั้งหมด
         bitwise_or(mask_red, mask_yellow, mask);
 
-        // 4. ลบ Noise (สำคัญมากเพื่อให้รูปทรงชัดเจนขึ้น)
-//        Mat kernel = getStructuringElement(MORPH_ELLIPSE, Size(5, 5));
-//        morphologyEx(mask, mask, MORPH_OPEN, kernel);
-//        morphologyEx(mask, mask, MORPH_CLOSE, kernel);
-
-        // 5. หา Contours
+        // 4. ค้นหา Contours
         vector<vector<Point>> contours;
         findContours(mask, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
 
@@ -107,23 +84,31 @@ int main() {
 
             if (stop || warning) {
                 Rect r = boundingRect(cnt);
+
+                // ปรับพิกัดกลับไปยังภาพ Full Frame
                 Rect actualRect = r;
                 actualRect.x += myROI.x;
                 actualRect.y += myROI.y;
 
-                Scalar color = stop ? Scalar(0, 0, 255) : Scalar(0, 255, 255); // แดง หรือ เหลือง
-                string label = stop ? "STOP" : "WARNING";
+                // ป้องกัน Rect หลุดขอบภาพ
+                actualRect &= Rect(0, 0, frame.cols, frame.rows);
 
-                rectangle(frame, actualRect, color, 3);
-                putText(frame, label, Point(actualRect.x, actualRect.y - 10),
-                    FONT_HERSHEY_SIMPLEX, 0.5, color, 2);
+                if (actualRect.area() > 0) {
+                    // --- CROP ROI ---
+                    RoiDetect = frame(actualRect).clone();
+                    imshow("Detected ROI", RoiDetect); // แสดงภาพที่ครอบมาได้
+
+                    // วาดกรอบและข้อความแยกตามประเภท
+                    Scalar color = stop ? Scalar(0, 0, 255) : Scalar(0, 255, 255);
+
+                    rectangle(frame, actualRect, color, 3);
+                }
             }
         }
 
-        imshow("Processed Mask", mask); // ดูว่า Noise หมดไหม
         imshow("Result", frame);
-
-        if (waitKey(30) == 27) break;
+		imshow("Mask", mask);
+        if (waitKey(30) == 27) break; // กด ESC เพื่อออก
     }
 
     cap.release();
