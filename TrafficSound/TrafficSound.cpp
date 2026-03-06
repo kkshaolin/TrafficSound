@@ -35,6 +35,29 @@ bool isStopSign(const vector<Point>& contour) {
     return false;
 }
 
+bool isYellowWarningSign(const vector<Point>& contour) {
+    double area = contourArea(contour);
+    if (area < 400) return false;
+
+    vector<Point> approx;
+    double perimeter = arcLength(contour, true);
+    approxPolyDP(contour, approx, 0.04 * perimeter, true); // เพิ่ม epsilon เล็กน้อยเพื่อตัดมุมมน
+
+    // ป้ายเตือนส่วนใหญ่เป็นรูป 4 เหลี่ยม (ที่หมุนเอียง)
+    if (approx.size() == 4) {
+        if (!isContourConvex(approx)) return false;
+
+        Rect boundingBox = boundingRect(approx);
+        double aspectRatio = (double)boundingBox.width / boundingBox.height;
+
+        // ป้ายสี่เหลี่ยมข้าวหลามตัดควรมีอัตราส่วนกว้างยาวใกล้เคียง 1.0
+        if (aspectRatio >= 0.8 && aspectRatio <= 1.2) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int main() {
 
     VideoCapture cap("test.mp4");
@@ -43,7 +66,7 @@ int main() {
         return -1;
     }
 
-    Mat frame, hsv, mask, mask_red, mask1, mask2, result;
+    Mat frame, hsv, mask, mask_red, mask1, mask2, mask_yellow, result;
 
     while (true) {
         cap >> frame;
@@ -64,7 +87,10 @@ int main() {
         inRange(hsv, Scalar(170, 120, 70), Scalar(180, 255, 255), mask2);
         bitwise_or(mask1, mask2, mask_red);
 
-        mask = mask_red;
+        // Mask สีเลือง
+		inRange(hsv, Scalar(20, 100, 100), Scalar(30, 255, 255), mask_yellow);
+
+        bitwise_or(mask_red, mask_yellow, mask);
 
         // 4. ลบ Noise (สำคัญมากเพื่อให้รูปทรงชัดเจนขึ้น)
 //        Mat kernel = getStructuringElement(MORPH_ELLIPSE, Size(5, 5));
@@ -76,18 +102,21 @@ int main() {
         findContours(mask, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
 
         for (const auto& cnt : contours) {
-            if (isStopSign(cnt)) {
-                Rect r = boundingRect(cnt);
+            bool stop = isStopSign(cnt);
+            bool warning = isYellowWarningSign(cnt);
 
-                // ปรับพิกัดให้ตรงกับ frame หลัก
+            if (stop || warning) {
+                Rect r = boundingRect(cnt);
                 Rect actualRect = r;
                 actualRect.x += myROI.x;
                 actualRect.y += myROI.y;
 
-                rectangle(frame, actualRect, Scalar(0, 255, 0), 3);
-                string label = "STOP [" + to_string(actualRect.width) + "x" + to_string(actualRect.height) + "]";
+                Scalar color = stop ? Scalar(0, 0, 255) : Scalar(0, 255, 255); // แดง หรือ เหลือง
+                string label = stop ? "STOP" : "WARNING";
+
+                rectangle(frame, actualRect, color, 3);
                 putText(frame, label, Point(actualRect.x, actualRect.y - 10),
-                    FONT_HERSHEY_SIMPLEX, 0.5, Scalar(0, 255, 0), 2);
+                    FONT_HERSHEY_SIMPLEX, 0.5, color, 2);
             }
         }
 
