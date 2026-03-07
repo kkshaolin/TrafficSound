@@ -109,6 +109,10 @@ int main() {
         bitwise_or(mask_red, mask_yellow, mask);
 		imshow("Mask", mask);
 
+//		Mat kernel = getStructuringElement(MORPH_RECT, Size(5, 5));
+//		morphologyEx(mask, mask, MORPH_CLOSE, kernel);
+//		morphologyEx(mask, mask, MORPH_OPEN, kernel);
+
         // 3. Find Contours (Current Blobs)
         vector<vector<Point>> contours;
         findContours(mask, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
