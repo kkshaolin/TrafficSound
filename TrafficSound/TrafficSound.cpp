@@ -4,6 +4,10 @@
 #include <vector>
 #include <fstream>
 #include <algorithm>
+#include <sapi.h>
+#include <thread> // สำหรับแยก Thread ไม่ให้โปรแกรมค้าง
+
+#pragma comment(lib, "sapi.lib")
 
 using namespace cv;
 using namespace std;
@@ -18,6 +22,7 @@ public:
     string type; // "Stop" หรือ "Warning"
     Mat crop;    // สำหรับส่งให้ AI
     Scalar color;
+	bool hasAnnounced = false; // เพื่อป้องกันการพูดซ้ำๆ
 
     TrackedSign(int _id, Rect _rect, string _type, Mat _frame) {
         id = _id;
@@ -26,6 +31,7 @@ public:
         center = Point(rect.x + rect.width / 2, rect.y + rect.height / 2);
         color = Scalar(rand() % 255, rand() % 255, rand() % 255);
         updateCrop(_frame);
+		hasAnnounced = false;
     }
 
     void update(Rect newRect, Mat _frame) {
@@ -123,7 +129,7 @@ string classifyCrop(const Mat& crop224) {
     Mat blob = cv::dnn::blobFromImage(
         crop224,
         1.0 / 255.0,
-        Size(224, 224),
+        Size(640, 640),
         Scalar(0, 0, 0),
         true,
         false,
@@ -149,13 +155,80 @@ string classifyCrop(const Mat& crop224) {
     return label + string(buf);
 }
 
+string detectInCrop(const Mat& crop) {
+    if (!gNetLoaded || crop.empty()) return "Empty";
+
+    // 1. Preprocessing: YOLO มักใช้ 640x640 และ Scale 1/255.0
+    // อย่าลืม swapRB: true เพราะ OpenCV อ่านเป็น BGR แต่ Model ส่วนใหญ่เทรนด้วย RGB
+    Mat blob = cv::dnn::blobFromImage(crop, 1.0 / 255.0, Size(640, 640), Scalar(0, 0, 0), true, false);
+    gNet.setInput(blob);
+
+    // 2. Forward Pass
+    Mat output = gNet.forward();
+
+    // 3. Post-processing สำหรับ YOLO (Shape: [1, 84, 8400])
+    // เราต้องเปลี่ยนจาก [1, 84, 8400] -> [8400, 84] เพื่อให้ไล่เช็คทีละ 'จุดตรวจจับ' ได้
+    Mat rawData = output.reshape(1, output.size[1]); // กลายเป็น [84, 8400]
+    transpose(rawData, rawData); // กลายเป็น [8400, 84]
+
+    float maxConf = 0;
+    int classId = -1;
+
+    // 4. วนลูปหาแถวที่มีคะแนนสูงสุด (ในภาพที่ Crop มา มักจะมีป้ายเดียวเด่นๆ)
+    for (int i = 0; i < rawData.rows; i++) {
+        // ใน YOLOv8: col 0-3 คือ bbox, col 4 เป็นต้นไปคือ class scores
+        Mat scores = rawData.row(i).colRange(4, rawData.cols);
+        double confidence;
+        Point classIdPoint;
+        minMaxLoc(scores, nullptr, &confidence, nullptr, &classIdPoint);
+
+        if (confidence > maxConf) {
+            maxConf = (float)confidence;
+            classId = classIdPoint.x;
+        }
+    }
+
+    // 5. คืนค่าผลลัพธ์ (กรองเอาเฉพาะที่มั่นใจมากกว่า 25%)
+    float threshold = 0.25;
+    if (classId != -1 && maxConf > threshold) {
+        string label = (classId < (int)gLabels.size()) ? gLabels[classId] : "ID:" + to_string(classId);
+
+        // แถมเลข Confidence ให้ดูด้วย จะได้รู้ว่าโมเดลมั่นใจแค่ไหน
+        char buf[32];
+        snprintf(buf, sizeof(buf), " (%.0f%%)", maxConf * 100.0);
+        return label + string(buf);
+    }
+
+    return "Unknown";
+}
+
+//---------------- Voice ----------------
+void speak(string text) {
+    // แยกเป็น Thread เพื่อไม่ให้ OpenCV ค้างขณะพูด
+thread t([text]() {
+    ISpVoice* pVoice = NULL;
+    if (FAILED(::CoInitialize(NULL))) return;
+
+    HRESULT hr = ::CoCreateInstance(CLSID_SpVoice, NULL, CLSCTX_ALL, IID_ISpVoice, (void**)&pVoice);
+    if (SUCCEEDED(hr)) {
+        // แปลง string เป็น wstring สำหรับ SAPI
+        wstring stemp = wstring(text.begin(), text.end());
+        pVoice->Speak(stemp.c_str(), 0, NULL);
+        pVoice->Release();
+        pVoice = NULL;
+    }
+    ::CoUninitialize();
+    });
+t.detach(); // ปล่อยให้ Thread ทำงานไปอิสระ
+}
+
 // ---------------- Main ----------------
 
 int main() {
     VideoCapture cap("test.mp4");
     if (!cap.isOpened()) return -1;
 
-    loadModel("best.onnx");
+    loadModel("best.onnx", "labels.txt");
 
     Mat frame, hsv, mask, mask1, mask2, mask_red, mask_yellow;
 
@@ -239,18 +312,27 @@ int main() {
             [](const TrackedSign& ts) { return ts.inactive_frames > 20; }), trackedSigns.end());
 
         // 5. Visualize
-        for (const auto& ts : trackedSigns) {
-            if (ts.inactive_frames < 5) { // แสดงเฉพาะป้ายที่เพิ่งเห็น (กันการสั่น)
-                rectangle(frame, ts.rect, ts.color, 2);
-                string label = "ID:" + to_string(ts.id) + " " + ts.type;
-                putText(frame, label, Point(ts.rect.x, ts.rect.y - 10), FONT_HERSHEY_SIMPLEX, 0.5, ts.color, 2);
+        //for (const auto& ts : trackedSigns) {
+        for (auto& ts : trackedSigns){
+            if (ts.inactive_frames < 5) {
 
-                //                if (!ts.crop.empty()) {
-                //                    imshow("AI Input (ID " + to_string(ts.id) + ")", ts.crop);
-                //                }
+                Mat aiInput;
+                resize(ts.crop, aiInput, Size(640, 640));
+//                string aiLabel = classifyCrop(aiInput);
+				string aiLabel = detectInCrop(aiInput);
+
+                rectangle(frame, ts.rect, ts.color, 2);
+                string label = "ID:" + to_string(ts.id) + " , CLASS:" + aiLabel;
+                putText(frame,label,Point(ts.rect.x, ts.rect.y - 10),FONT_HERSHEY_SIMPLEX,0.6,ts.color,2);
+
+                if (!aiLabel.empty() && !ts.hasAnnounced) {
+                    resize(aiInput, aiInput, Size(), 0.5, 0.5);
+                    imshow("AI Input", aiInput);
+					speak(label);
+					ts.hasAnnounced = true; // ป้องกันการพูดซ้ำๆ
+                }
             }
         }
-
         imshow("Result", frame);
         if (waitKey(30) == 27) break;
     }

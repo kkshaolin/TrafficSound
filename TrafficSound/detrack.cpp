@@ -1,6 +1,9 @@
 ﻿//#include <opencv2/opencv.hpp>
+//#include <opencv2/dnn.hpp>
 //#include <iostream>
 //#include <vector>
+//#include <fstream>
+//#include <algorithm>
 //
 //using namespace cv;
 //using namespace std;
@@ -44,6 +47,9 @@
 //// ---------------- Global Variables ----------------
 //int nextID = 0;
 //vector<TrackedSign> trackedSigns;
+//cv::dnn::Net gNet;
+//vector<string> gLabels;
+//bool gNetLoaded = false;
 //
 //// ---------------- Detection Functions ----------------
 //
@@ -82,11 +88,74 @@
 //    return false;
 //}
 //
+//// ---------------- DNN Functions ----------------
+//bool loadModel(const string& model, const string& labelsPath = "") {
+//    if (!labelsPath.empty()) {
+//        ifstream f(labelsPath);
+//        if (f.is_open()) {
+//            string line;
+//            while (getline(f, line)) {
+//                if (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
+//                if (!line.empty()) gLabels.push_back(line);
+//            }
+//            cout << "Labels loaded: " << gLabels.size() << "\n";
+//        }
+//    }
+//
+//    try {
+//        gNet = cv::dnn::readNetFromONNX(model);
+//
+//    }
+//    catch (const cv::Exception& e) {
+//        cerr << "Error loading model: " << e.what() << "\n";
+//        return false;
+//    }
+//    gNet.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
+//    gNet.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
+//    gNetLoaded = true;
+//    cout << "Model loaded OK\n";
+//    return true;
+//}
+//
+//string classifyCrop(const Mat& crop224) {
+//    if (!gNetLoaded || crop224.empty()) return "";
+//
+//    Mat blob = cv::dnn::blobFromImage(
+//        crop224,
+//        1.0 / 255.0,
+//        Size(640, 640),
+//        Scalar(0, 0, 0),
+//        true,
+//        false,
+//        CV_32F
+//    );
+//
+//    gNet.setInput(blob);
+//    Mat out = gNet.forward();
+//    Mat outRow = out.reshape(1, 1);
+//    if (outRow.type() != CV_32F) outRow.convertTo(outRow, CV_32F);
+//
+//    Point maxLoc;
+//    double confidence = 0.0;
+//    minMaxLoc(outRow, nullptr, &confidence, nullptr, &maxLoc);
+//    int classId = maxLoc.x;
+//
+//    string label = (!gLabels.empty() && classId < (int)gLabels.size())
+//        ? gLabels[classId]
+//        : "cls:" + to_string(classId);
+//
+//    char buf[64];
+//    snprintf(buf, sizeof(buf), " %.1f%%", confidence * 100.0);
+//    return label + string(buf);
+//}
+//
 //// ---------------- Main ----------------
 //
-//int main_track() {
+//int main() {
 //    VideoCapture cap("test.mp4");
 //    if (!cap.isOpened()) return -1;
+//
+//    loadModel("best.onnx", "labels.txt");
 //
 //    Mat frame, hsv, mask, mask1, mask2, mask_red, mask_yellow;
 //
@@ -109,11 +178,11 @@
 //        bitwise_or(mask_red, mask_yellow, mask);
 //        imshow("Mask", mask);
 //
-//        //		Mat kernel = getStructuringElement(MORPH_RECT, Size(5, 5));
-//        //		morphologyEx(mask, mask, MORPH_CLOSE, kernel);
-//        //		morphologyEx(mask, mask, MORPH_OPEN, kernel);
+//        //Mat kernel = getStructuringElement(MORPH_RECT, Size(5, 5));
+//        //morphologyEx(mask, mask, MORPH_CLOSE, kernel);
+//        //morphologyEx(mask, mask, MORPH_OPEN, kernel);
 //
-//                // 3. Find Contours (Current Blobs)
+//        // 3. Find Contours (Current Blobs)
 //        vector<vector<Point>> contours;
 //        findContours(mask, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
 //
@@ -171,17 +240,33 @@
 //
 //        // 5. Visualize
 //        for (const auto& ts : trackedSigns) {
-//            if (ts.inactive_frames < 5) { // แสดงเฉพาะป้ายที่เพิ่งเห็น (กันการสั่น)
-//                rectangle(frame, ts.rect, ts.color, 2);
-//                string label = "ID:" + to_string(ts.id) + " " + ts.type;
-//                putText(frame, label, Point(ts.rect.x, ts.rect.y - 10), FONT_HERSHEY_SIMPLEX, 0.5, ts.color, 2);
+//            if (ts.inactive_frames < 5) {
 //
-//                //                if (!ts.crop.empty()) {
-//                //                    imshow("AI Input (ID " + to_string(ts.id) + ")", ts.crop);
-//                //                }
+//                Mat aiInput;
+//                resize(ts.crop, aiInput, Size(640, 640));
+//
+//                string aiLabel = classifyCrop(aiInput);
+//
+//                rectangle(frame, ts.rect, ts.color, 2);
+//
+//                string label = "ID:" + to_string(ts.id) + " , CLASS:" + aiLabel;
+//
+//                putText(frame,
+//                    label,
+//                    Point(ts.rect.x, ts.rect.y - 10),
+//                    FONT_HERSHEY_SIMPLEX,
+//                    0.6,
+//                    ts.color,
+//                    2);
+//
+//                if (!aiInput.empty()) {
+//                    resize(aiInput, aiInput, Size(), 0.5, 0.5);
+//                    imshow("AI Input", aiInput);
+//                }
 //            }
 //        }
 //
+//        //cout << "Labels loaded: " << gLabels.size() << endl;
 //        imshow("Result", frame);
 //        if (waitKey(30) == 27) break;
 //    }
