@@ -1,0 +1,5 @@
+labelImg 
+ultralytics
+albumentations
+opencv-python
+tqdm
