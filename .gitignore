@@ -4,6 +4,7 @@
 # ML Models (Large files)
 *.onnx
 *.pth
+*.pt
 model/
 .model/
 
