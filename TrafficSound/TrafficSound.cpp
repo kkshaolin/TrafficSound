@@ -123,35 +123,32 @@ bool loadModel(const string& model, const string& labelsPath = "") {
     return true;
 }
 
-string classifyCrop(const Mat& crop224) {
-    if (!gNetLoaded || crop224.empty()) return "";
+string classifyCrop(const Mat& crop) {
+    if (!gNetLoaded || crop.empty()) return "No Model";
 
-    Mat blob = cv::dnn::blobFromImage(
-        crop224,
-        1.0 / 255.0,
-        Size(640, 640),
-        Scalar(0, 0, 0),
-        true,
-        false,
-        CV_32F
-    );
-
+    // 1. Preprocessing: YOLO-cls ส่วนใหญ่ใช้ 224x224 (หรือตามที่คุณเทรนมา เช่น 640x640)
+    // สำคัญ: ตรวจสอบขนาด Size(width, height) ให้ตรงกับที่ตอนเทรน
+    Mat blob = cv::dnn::blobFromImage(crop, 1.0 / 255.0, Size(640, 640), Scalar(0, 0, 0), true, false);
     gNet.setInput(blob);
-    Mat out = gNet.forward();
-    Mat outRow = out.reshape(1, 1);
-    if (outRow.type() != CV_32F) outRow.convertTo(outRow, CV_32F);
 
-    Point maxLoc;
-    double confidence = 0.0;
-    minMaxLoc(outRow, nullptr, &confidence, nullptr, &maxLoc);
-    int classId = maxLoc.x;
+    // 2. Forward Pass: ได้ Output เป็น [1, num_classes]
+    Mat prob = gNet.forward();
 
-    string label = (!gLabels.empty() && classId < (int)gLabels.size())
-        ? gLabels[classId]
-        : "cls:" + to_string(classId);
+    // 3. หา Class ที่มีคะแนนสูงสุด
+    Point classIdPoint;
+    double confidence;
+    minMaxLoc(prob.reshape(1, 1), nullptr, &confidence, nullptr, &classIdPoint);
+    int classId = classIdPoint.x;
 
-    char buf[64];
-    snprintf(buf, sizeof(buf), " %.1f%%", confidence * 100.0);
+    // 4. กรองค่า Confidence (ถ้าโมเดลมั่นใจน้อยกว่า 50% ให้บอกว่า Unknown)
+    if (confidence < 0.5) return "Uncertain (" + to_string((int)(confidence * 100)) + "%)";
+
+    // 5. คืนค่า Label
+    string label = (classId < (int)gLabels.size()) ? gLabels[classId] : "ID:" + to_string(classId);
+
+    // คืนค่า Label พร้อมเปอร์เซ็นต์ความมั่นใจ
+    char buf[32];
+    snprintf(buf, sizeof(buf), " %.0f%%", confidence * 100.0);
     return label + string(buf);
 }
 
@@ -228,7 +225,7 @@ int main() {
     VideoCapture cap("test.mp4");
     if (!cap.isOpened()) return -1;
 
-    loadModel("best.onnx", "labels.txt");
+    loadModel("trafic.onnx", "trafic_label.txt");
 
     Mat frame, hsv, mask, mask1, mask2, mask_red, mask_yellow;
 
@@ -242,6 +239,7 @@ int main() {
         Mat cropped = frame(myROI).clone();
         GaussianBlur(cropped, cropped, Size(5, 5), 0);
         cvtColor(cropped, hsv, COLOR_BGR2HSV);
+		//imshow("Crop", cropped);
 
         // 2. Color Masking
         inRange(hsv, Scalar(0, 120, 70), Scalar(10, 255, 255), mask1);
@@ -249,7 +247,7 @@ int main() {
         bitwise_or(mask1, mask2, mask_red);
         inRange(hsv, Scalar(20, 100, 100), Scalar(32, 255, 255), mask_yellow);
         bitwise_or(mask_red, mask_yellow, mask);
-        imshow("Mask", mask);
+        //imshow("Mask", mask);
 
         //Mat kernel = getStructuringElement(MORPH_RECT, Size(5, 5));
         //morphologyEx(mask, mask, MORPH_CLOSE, kernel);
@@ -318,22 +316,53 @@ int main() {
 
                 Mat aiInput;
                 resize(ts.crop, aiInput, Size(640, 640));
-//                string aiLabel = classifyCrop(aiInput);
-				string aiLabel = detectInCrop(aiInput);
+                string aiLabel = classifyCrop(aiInput);
+				//string aiLabel = detectInCrop(aiInput);
 
                 rectangle(frame, ts.rect, ts.color, 2);
                 string label = "ID:" + to_string(ts.id) + " , CLASS:" + aiLabel;
                 putText(frame,label,Point(ts.rect.x, ts.rect.y - 10),FONT_HERSHEY_SIMPLEX,0.6,ts.color,2);
 
                 if (!aiLabel.empty() && !ts.hasAnnounced) {
-                    resize(aiInput, aiInput, Size(), 0.5, 0.5);
-                    imshow("AI Input", aiInput);
-					speak(label);
+                    //resize(aiInput, aiInput, Size(), 0.5, 0.5);
+                    //imshow("AI Input", aiInput);
+					string massage = label; // คุณสามารถปรับข้อความที่จะพูดได้ตามต้องการ ใช้ if-else
+                    if (aiLabel == "STOP") {
+                        massage = "Stop sign detected!";
+                    }
+					speak(massage);
 					ts.hasAnnounced = true; // ป้องกันการพูดซ้ำๆ
                 }
             }
         }
-        imshow("Result", frame);
+        //imshow("Result", frame);
+        Mat imgGui = Mat::zeros(Size(1366, 768), CV_8UC3);
+        rectangle(imgGui, Point(0, 0), Point(imgGui.cols, 45), Scalar(0, 108, 0), FILLED);
+        putText(imgGui, "TrafficSound", Point(10, 30),FONT_HERSHEY_SIMPLEX, 0.8, Scalar(255, 255, 255), 2);
+        int cellWidth = imgGui.cols / 2;
+        int cellHeight = (imgGui.rows - 45) / 2;
+
+        Mat frameGui;
+		resize(frame, frameGui, Size(cellWidth, cellHeight));
+        frameGui.copyTo(imgGui(Rect(0, 45, cellWidth, cellHeight)));
+
+		Mat roiGui;
+		resize(cropped, roiGui, Size(cellWidth/2, cellHeight));
+		roiGui.copyTo(imgGui(Rect(cellWidth+20, 45, cellWidth/2, cellHeight)));
+
+		Mat maskGui;
+		resize(mask, maskGui, Size(cellWidth/2, cellHeight));
+		cvtColor(maskGui, maskGui, COLOR_GRAY2BGR);
+		maskGui.copyTo(imgGui(Rect(0, 45 + cellHeight, cellWidth/2, cellHeight)));
+
+		Mat aiGui;
+        if (!trackedSigns.empty()) {
+            Mat lastCrop = trackedSigns.back().crop;
+            resize(lastCrop, aiGui, Size(cellWidth/4, cellHeight/2));
+            aiGui.copyTo(imgGui(Rect(cellWidth, 45 + cellHeight, cellWidth/4, cellHeight/2)));
+		}
+
+		imshow("TrafficSound", imgGui);
         if (waitKey(30) == 27) break;
     }
     return 0;
