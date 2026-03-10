@@ -22,7 +22,11 @@ public:
     string type; // "Stop" หรือ "Warning"
     Mat crop;    // สำหรับส่งให้ AI
     Scalar color;
+
 	bool hasAnnounced = false; // เพื่อป้องกันการพูดซ้ำๆ
+
+    string aiLabel = "";
+    bool aiProcessed = false;
 
     TrackedSign(int _id, Rect _rect, string _type, Mat _frame) {
         id = _id;
@@ -314,20 +318,24 @@ int main() {
         for (auto& ts : trackedSigns){
             if (ts.inactive_frames < 5) {
 
-                Mat aiInput;
-                resize(ts.crop, aiInput, Size(640, 640));
-                string aiLabel = classifyCrop(aiInput);
-				//string aiLabel = detectInCrop(aiInput);
+                if (!ts.aiProcessed) {
+
+                    Mat aiInput;
+                    resize(ts.crop, aiInput, Size(640, 640));
+                    ts.aiLabel = classifyCrop(aiInput);
+                    //ts.aiLabel = detectInCrop(aiInput);
+                    ts.aiProcessed = true;
+                }
 
                 rectangle(frame, ts.rect, ts.color, 2);
-                string label = "ID:" + to_string(ts.id) + " , CLASS:" + aiLabel;
+                string label = "ID:" + to_string(ts.id) + " , CLASS:" + ts.aiLabel;
                 putText(frame,label,Point(ts.rect.x, ts.rect.y - 10),FONT_HERSHEY_SIMPLEX,0.6,ts.color,2);
 
-                if (!aiLabel.empty() && !ts.hasAnnounced) {
+                if (!ts.aiLabel.empty() && !ts.hasAnnounced){
                     //resize(aiInput, aiInput, Size(), 0.5, 0.5);
                     //imshow("AI Input", aiInput);
 					string massage = label; // คุณสามารถปรับข้อความที่จะพูดได้ตามต้องการ ใช้ if-else
-                    if (aiLabel == "STOP") {
+                    if (ts.aiLabel == "STOP"){
                         massage = "Stop sign detected!";
                     }
 					speak(massage);
