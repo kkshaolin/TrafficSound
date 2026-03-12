@@ -153,7 +153,7 @@ string classifyCrop(const Mat& crop) {
     // คืนค่า Label พร้อมเปอร์เซ็นต์ความมั่นใจ
     char buf[32];
     snprintf(buf, sizeof(buf), " %.0f%%", confidence * 100.0);
-    return label + string(buf);
+    return label;
 }
 
 string detectInCrop(const Mat& crop) {
@@ -224,12 +224,11 @@ t.detach(); // ปล่อยให้ Thread ทำงานไปอิสร
 }
 
 // ---------------- Main ----------------
-
 int main() {
     VideoCapture cap("test.mp4");
     if (!cap.isOpened()) return -1;
 
-    loadModel("trafic.onnx", "trafic_label.txt");
+    loadModel("yolov8_cls_5class.onnx", "label.txt");
 
     Mat frame, hsv, mask, mask1, mask2, mask_red, mask_yellow;
 
@@ -242,10 +241,10 @@ int main() {
         Rect myROI(frame.cols / 2, 0, frame.cols / 2, frame.rows);
         Mat cropped = frame(myROI).clone();
         GaussianBlur(cropped, cropped, Size(5, 5), 0);
-        cvtColor(cropped, hsv, COLOR_BGR2HSV);
 		//imshow("Crop", cropped);
 
         // 2. Color Masking
+        cvtColor(cropped, hsv, COLOR_BGR2HSV);
         inRange(hsv, Scalar(0, 120, 70), Scalar(10, 255, 255), mask1);
         inRange(hsv, Scalar(170, 120, 70), Scalar(180, 255, 255), mask2);
         bitwise_or(mask1, mask2, mask_red);
@@ -321,7 +320,7 @@ int main() {
                 if (!ts.aiProcessed) {
 
                     Mat aiInput;
-                    resize(ts.crop, aiInput, Size(640, 640));
+                    resize(ts.crop, aiInput, Size(224, 224));
                     ts.aiLabel = classifyCrop(aiInput);
                     //ts.aiLabel = detectInCrop(aiInput);
                     ts.aiProcessed = true;
@@ -334,10 +333,12 @@ int main() {
                 if (!ts.aiLabel.empty() && !ts.hasAnnounced){
                     //resize(aiInput, aiInput, Size(), 0.5, 0.5);
                     //imshow("AI Input", aiInput);
-					string massage = label; // คุณสามารถปรับข้อความที่จะพูดได้ตามต้องการ ใช้ if-else
-                    if (ts.aiLabel == "STOP"){
-                        massage = "Stop sign detected!";
-                    }
+					string massage = ts.aiLabel; // สามารถปรับข้อความที่จะพูดได้ตามต้องการ ใช้ if-else
+					printf("Detected: %s\n", massage.c_str());
+      //              if (massage == "background") {
+						//massage = ""; // ไม่พูดอะไรถ้าเป็น background
+      //              }
+                    
 					speak(massage);
 					ts.hasAnnounced = true; // ป้องกันการพูดซ้ำๆ
                 }
