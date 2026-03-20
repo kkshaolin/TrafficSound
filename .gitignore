@@ -28,3 +28,7 @@ TrafficSound/Debug/
 *.exe
 *.pdb
 *.ilk
+
+model_train/raw
+model_train/cls_project
+model_train/venv_yolo
