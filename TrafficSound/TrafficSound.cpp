@@ -156,53 +156,6 @@ string classifyCrop(const Mat& crop) {
     return label;
 }
 
-string detectInCrop(const Mat& crop) {
-    if (!gNetLoaded || crop.empty()) return "Empty";
-
-    // 1. Preprocessing: YOLO มักใช้ 640x640 และ Scale 1/255.0
-    // อย่าลืม swapRB: true เพราะ OpenCV อ่านเป็น BGR แต่ Model ส่วนใหญ่เทรนด้วย RGB
-    Mat blob = cv::dnn::blobFromImage(crop, 1.0 / 255.0, Size(640, 640), Scalar(0, 0, 0), true, false);
-    gNet.setInput(blob);
-
-    // 2. Forward Pass
-    Mat output = gNet.forward();
-
-    // 3. Post-processing สำหรับ YOLO (Shape: [1, 84, 8400])
-    // เราต้องเปลี่ยนจาก [1, 84, 8400] -> [8400, 84] เพื่อให้ไล่เช็คทีละ 'จุดตรวจจับ' ได้
-    Mat rawData = output.reshape(1, output.size[1]); // กลายเป็น [84, 8400]
-    transpose(rawData, rawData); // กลายเป็น [8400, 84]
-
-    float maxConf = 0;
-    int classId = -1;
-
-    // 4. วนลูปหาแถวที่มีคะแนนสูงสุด (ในภาพที่ Crop มา มักจะมีป้ายเดียวเด่นๆ)
-    for (int i = 0; i < rawData.rows; i++) {
-        // ใน YOLOv8: col 0-3 คือ bbox, col 4 เป็นต้นไปคือ class scores
-        Mat scores = rawData.row(i).colRange(4, rawData.cols);
-        double confidence;
-        Point classIdPoint;
-        minMaxLoc(scores, nullptr, &confidence, nullptr, &classIdPoint);
-
-        if (confidence > maxConf) {
-            maxConf = (float)confidence;
-            classId = classIdPoint.x;
-        }
-    }
-
-    // 5. คืนค่าผลลัพธ์ (กรองเอาเฉพาะที่มั่นใจมากกว่า 25%)
-    float threshold = 0.25;
-    if (classId != -1 && maxConf > threshold) {
-        string label = (classId < (int)gLabels.size()) ? gLabels[classId] : "ID:" + to_string(classId);
-
-        // แถมเลข Confidence ให้ดูด้วย จะได้รู้ว่าโมเดลมั่นใจแค่ไหน
-        char buf[32];
-        snprintf(buf, sizeof(buf), " (%.0f%%)", maxConf * 100.0);
-        return label + string(buf);
-    }
-
-    return "Unknown";
-}
-
 //---------------- Voice ----------------
 void speak(string text) {
     // แยกเป็น Thread เพื่อไม่ให้ OpenCV ค้างขณะพูด
@@ -322,7 +275,6 @@ int main() {
                     Mat aiInput;
                     resize(ts.crop, aiInput, Size(224, 224));
                     ts.aiLabel = classifyCrop(aiInput);
-                    //ts.aiLabel = detectInCrop(aiInput);
                     ts.aiProcessed = true;
                 }
 
@@ -335,9 +287,9 @@ int main() {
                     //imshow("AI Input", aiInput);
 					string massage = ts.aiLabel; // สามารถปรับข้อความที่จะพูดได้ตามต้องการ ใช้ if-else
 					printf("Detected: %s\n", massage.c_str());
-      //              if (massage == "background") {
-						//massage = ""; // ไม่พูดอะไรถ้าเป็น background
-      //              }
+                   if (massage == "background") {
+						massage = ""; // ไม่พูดอะไรถ้าเป็น background
+                   }
                     
 					speak(massage);
 					ts.hasAnnounced = true; // ป้องกันการพูดซ้ำๆ
